@@ -1245,6 +1245,68 @@ function lecron_ensure_performance_table($db)
     }
 }
 
+function lecron_find_existing_performance_row($db, array $probe)
+{
+    $cols = lecron_columns($db, '#__skai_learning_performance');
+    foreach (array('user_id', 'run_id', 'draw_date', 'source') as $required) {
+        if (!lecron_has_col($cols, $required)) {
+            return array();
+        }
+    }
+    $select = lecron_select_existing($db, $cols, array(
+        'id',
+        'user_id',
+        'run_id',
+        'draw_date',
+        'source',
+        'run_uuid',
+        'snapshot_run_uuid',
+        'run_identity_key',
+        'prediction_target_id',
+        'prediction_target_key',
+        'target_game_id',
+        'target_lottery_id',
+        'target_draw_date'
+    ));
+    if (empty($select)) {
+        return array();
+    }
+    try {
+        $q = $db->getQuery(true)
+            ->select($select)
+            ->from($db->quoteName('#__skai_learning_performance'))
+            ->where($db->quoteName('user_id') . ' = ' . (int)($probe['user_id'] ?? 0))
+            ->where($db->quoteName('run_id') . ' = ' . (int)($probe['run_id'] ?? 0))
+            ->where($db->quoteName('draw_date') . ' = ' . $db->quote((string)($probe['draw_date'] ?? '')))
+            ->where($db->quoteName('source') . ' = ' . $db->quote((string)($probe['source'] ?? '')))
+            ->setLimit(1);
+        $db->setQuery($q);
+        $row = $db->loadAssoc();
+        return is_array($row) ? $row : array();
+    } catch (Throwable $e) {
+        lecron_log('performance lookup failed for saved row ' . (int)($probe['run_id'] ?? 0) . ': ' . $e->getMessage());
+        return array();
+    }
+}
+
+function lecron_performance_overwrite_conflicts(array $existing, array $incoming)
+{
+    $conflicts = array();
+    foreach (array('run_uuid', 'snapshot_run_uuid', 'run_identity_key', 'prediction_target_id', 'prediction_target_key', 'target_game_id', 'target_draw_date') as $field) {
+        $old = strtolower(trim((string)($existing[$field] ?? '')));
+        $new = strtolower(trim((string)($incoming[$field] ?? '')));
+        if ($old !== '' && $new !== '' && $old !== $new) {
+            $conflicts[] = $field;
+        }
+    }
+    $oldLotteryId = (int)($existing['target_lottery_id'] ?? 0);
+    $newLotteryId = (int)($incoming['target_lottery_id'] ?? 0);
+    if ($oldLotteryId > 0 && $newLotteryId > 0 && $oldLotteryId !== $newLotteryId) {
+        $conflicts[] = 'target_lottery_id';
+    }
+    return $conflicts;
+}
+
 function lecron_upsert_performance($db, array $row, array $score, $dryRun)
 {
     if (!lecron_ensure_performance_table($db)) {
@@ -1340,6 +1402,19 @@ function lecron_upsert_performance($db, array $row, array $score, $dryRun)
     }
     if (empty($insertCols)) {
         return false;
+    }
+    $existing = lecron_find_existing_performance_row($db, array(
+        'user_id' => (int)($values['user_id'] ?? 0),
+        'run_id' => (int)($values['run_id'] ?? 0),
+        'draw_date' => (string)($values['draw_date'] ?? ''),
+        'source' => (string)($values['source'] ?? '')
+    ));
+    if (!empty($existing)) {
+        $conflicts = lecron_performance_overwrite_conflicts($existing, $values);
+        if (!empty($conflicts)) {
+            lecron_log('performance overwrite safeguard skipped saved row ' . $savedId . ' due to mismatched existing row id ' . (int)($existing['id'] ?? 0) . ' fields=' . implode(',', $conflicts));
+            return false;
+        }
     }
     if ($dryRun) {
         return true;
