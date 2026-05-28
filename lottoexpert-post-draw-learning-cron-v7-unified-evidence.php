@@ -1284,7 +1284,7 @@ function lecron_find_existing_performance_row($db, array $probe)
         $row = $db->loadAssoc();
         return is_array($row) ? $row : array();
     } catch (Throwable $e) {
-        lecron_log('performance lookup failed for saved row ' . (int)($probe['run_id'] ?? 0) . ': ' . $e->getMessage());
+        lecron_log('performance lookup failed for run_id ' . (int)($probe['run_id'] ?? 0) . ': ' . $e->getMessage());
         return array();
     }
 }
@@ -1412,7 +1412,7 @@ function lecron_upsert_performance($db, array $row, array $score, $dryRun)
     if (!empty($existing)) {
         $conflicts = lecron_performance_overwrite_conflicts($existing, $values);
         if (!empty($conflicts)) {
-            lecron_log('performance overwrite safeguard skipped saved row ' . $savedId . ' due to mismatched existing row id ' . (int)($existing['id'] ?? 0) . ' fields=' . implode(',', $conflicts));
+            lecron_log('performance overwrite safeguard skipped run_id ' . (int)($values['run_id'] ?? 0) . ' due to mismatched existing row id ' . (int)($existing['id'] ?? 0) . ' fields=' . implode(',', $conflicts));
             return false;
         }
     }
