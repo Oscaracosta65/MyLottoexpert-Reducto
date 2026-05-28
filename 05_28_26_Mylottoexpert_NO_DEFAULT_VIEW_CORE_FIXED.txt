@@ -189,15 +189,6 @@ if ($__mleIsCoreAdmin && (int)$app->input->getInt('mle_perf_diag', 0) === 1) {
 | preview= guest is redirected to the public preview page
 |--------------------------------------------------------------------------
 */
-/*
-|--------------------------------------------------------------------------
-| Workspace Mode Controller
-|--------------------------------------------------------------------------
-| real   = logged-in user sees their real workspace
-| demo   = guest sees the real workspace in read-only demo mode
-| preview= guest is redirected to the public preview page
-|--------------------------------------------------------------------------
-*/
 $__mlePreviewUrl = \Joomla\CMS\Uri\Uri::base() . 'lottoexpert-preview';
 $__mleMode       = 'real';
 $__mleDemoUserId = 555; // your demo account user ID
@@ -34963,67 +34954,6 @@ function mylottoexpertExtractRegularSavedView($row)
     return $result;
 }
 
-
-// [[MLE_DAILY_DISPLAY_CAPS_V2_FATAL_FIX_2026_05_26]]
-// Daily/Pick games must render as a small ranked combo set, not as the full
-// digit universe. Keep the legacy user-facing shape: five daily combo rows and
-// three bonus/extra digits. This helper is deliberately defensive because it is
-// called by both structured saved rows and legacy top_combos_json rows.
-if (!function_exists('mylottoexpertApplyDailyDisplayCaps')) {
-    function mylottoexpertApplyDailyDisplayCaps(array $result)
-    {
-        $pickSize = (int)($result['pick_size'] ?? 0);
-        $rankLimit = ($pickSize >= 2 && $pickSize <= 5) ? $pickSize : 5;
-
-        $comboStrings = array();
-        foreach ((array)($result['combo_strings'] ?? array()) as $__combo) {
-            $__combo = preg_replace('/[^0-9]/', '', (string)$__combo);
-            if ($__combo === '') { continue; }
-            if ($pickSize > 0 && strlen($__combo) > $pickSize) {
-                $__combo = substr($__combo, 0, $pickSize);
-            }
-            if ($__combo !== '' && !in_array($__combo, $comboStrings, true)) {
-                $comboStrings[] = $__combo;
-            }
-            if (count($comboStrings) >= 5) { break; }
-        }
-        $result['combo_strings'] = array_slice($comboStrings, 0, 5);
-
-        // Keep any prebuilt "combo + Bonus" strings aligned to the same five combo rows.
-        $withBonus = array();
-        foreach ((array)($result['combo_strings_with_bonus'] ?? array()) as $__comboBonus) {
-            $__comboBonus = trim((string)$__comboBonus);
-            if ($__comboBonus === '') { continue; }
-            if (!in_array($__comboBonus, $withBonus, true)) { $withBonus[] = $__comboBonus; }
-            if (count($withBonus) >= 5) { break; }
-        }
-        $result['combo_strings_with_bonus'] = array_slice($withBonus, 0, 5);
-
-        $result['ranked_digits'] = array_slice(array_values(array_unique(array_map('intval', (array)($result['ranked_digits'] ?? array())))), 0, $rankLimit);
-        $result['primary_combo_digits'] = array_slice(array_values(array_map('intval', (array)($result['primary_combo_digits'] ?? array()))), 0, ($pickSize > 0 ? $pickSize : 5));
-        $result['extra_digits'] = array_slice(array_values(array_unique(array_map('intval', (array)($result['extra_digits'] ?? array())))), 0, 3);
-        $result['bonus_digits'] = array_slice(array_values(array_unique(array_map('intval', (array)($result['bonus_digits'] ?? array())))), 0, 3);
-        $result['top_extras'] = array_slice(array_values(array_unique(array_map('intval', (array)($result['top_extras'] ?? array())))), 0, 3);
-
-        if (empty($result['primary_combo_digits']) && !empty($result['combo_strings'])) {
-            $result['primary_combo_digits'] = mylottoexpertDigitStringToArray($result['combo_strings'][0]);
-        }
-
-        if (!empty($result['bonus_digits'])) {
-            $result['bonus_digits_display'] = array_map('mylottoexpertFormatBonusDigit', $result['bonus_digits']);
-        } elseif (!empty($result['extra_digits'])) {
-            $result['bonus_digits_display'] = array_map('mylottoexpertFormatBonusDigit', $result['extra_digits']);
-        } else {
-            $result['bonus_digits_display'] = array_slice(array_values(array_map('strval', (array)($result['bonus_digits_display'] ?? array()))), 0, 3);
-        }
-
-        if (empty($result['combo_strings_with_bonus']) && !empty($result['combo_strings'])) {
-            $result['combo_strings_with_bonus'] = $result['combo_strings'];
-        }
-
-        return $result;
-    }
-}
 
 function mylottoexpertExtractDailySavedView($row)
 {
