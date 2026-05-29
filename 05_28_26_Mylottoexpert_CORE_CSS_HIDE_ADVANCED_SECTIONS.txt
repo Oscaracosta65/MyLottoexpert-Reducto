@@ -4019,6 +4019,17 @@ html[data-mle-mode="standard"] .mle-quick-nav__advanced{display:none !important;
   background:#fff; color:#dc2626; border:1px solid #dc2626;
   border-radius:6px; cursor:pointer; vertical-align:middle;
 }
+.sdi-snap-right .sdi-delete-form{
+  display:flex !important;
+  flex:1 0 100%;
+  margin:0.35rem 0 0 !important;
+  justify-content:flex-end;
+}
+.sdi-delete-btn__icon{
+  display:inline-block;
+  margin-right:0.35rem;
+  font-weight:900;
+}
 .sdi-delete-btn:hover{ background:#fef2f2; }
 .sdi-delete-btn:focus-visible{ outline:2px solid #dc2626; outline-offset:2px; }
 .sdi-tab-bar{

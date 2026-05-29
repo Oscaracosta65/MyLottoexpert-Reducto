@@ -40859,9 +40859,9 @@ unset($__lotRef);
           Print All
         </button><?php endif; ?>
 
-        <?php if ($__mleWorkspaceMode === 'advanced'): ?><form method="post" style="display:inline-flex; margin:0; vertical-align:middle;"
-               aria-label="Delete predictions for this draw"
-               data-confirm-submit="Delete all predictions for this draw?">
+        <?php if ($__mleWorkspaceMode !== 'beginner'): ?><form method="post" class="sdi-delete-form" style="display:inline-flex; margin:0; vertical-align:middle;"
+               aria-label="Delete from MyLottoExpert"
+               data-confirm-submit="Delete from MyLottoExpert?">
           <?php echo \Joomla\CMS\HTML\HTMLHelper::_('form.token'); ?>
           <input type="hidden" name="delete_lottery_predictions" value="1">
           <input type="hidden" name="lottery_id" value="<?php echo (int)$g['lottery_id']; ?>">
@@ -40871,9 +40871,9 @@ unset($__lotRef);
           <input type="hidden" name="target_draw_session" value="<?php echo htmlspecialchars((string)($g['target_draw_session'] ?? ''), ENT_QUOTES); ?>">
           <button type="submit"
                    class="sdi-delete-btn"
-                   aria-label="Delete all predictions for this draw"
-                   title="Delete all predictions for this draw">
-            <span aria-hidden="true"></span> Delete
+                   aria-label="Delete from MyLottoExpert"
+                   title="Delete from MyLottoExpert">
+            <span class="sdi-delete-btn__icon" aria-hidden="true">X</span> Delete from MyLottoExpert
           </button>
         </form><?php endif; ?>
       </div>
