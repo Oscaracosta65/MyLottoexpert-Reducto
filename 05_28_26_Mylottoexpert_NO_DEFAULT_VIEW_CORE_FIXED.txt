@@ -26449,142 +26449,210 @@ if ($__mleAction === 'run_skai_precision_lock_batch') {
     return;
 }
 
+if (!function_exists('mylottoexpertNormalizeAdviceStatusAction')) {
+    function mylottoexpertNormalizeAdviceStatusAction($rawAction) {
+        $action = strtolower(trim((string)$rawAction));
+        if ($action === '') {
+            return '';
+        }
+        $action = preg_replace('/[^a-z_]/', '', $action);
+
+        $adminOnly = array(
+            'delete_permanently',
+            'permanent_delete',
+            'delete',
+            'quarantine',
+            'quarantine_duplicate',
+            'repair',
+            'batch_cleanup',
+            'global_apply',
+            'force_reconcile'
+        );
+        if (in_array($action, $adminOnly, true)) {
+            return ($action === 'permanent_delete' || $action === 'delete') ? 'delete_permanently' : $action;
+        }
+
+        $map = array(
+            'use_future_advice' => 'consider',
+            'use_for_future_advice' => 'consider',
+            'future' => 'consider',
+            'consider' => 'consider',
+            'use' => 'consider',
+            'use_future' => 'consider',
+            'keep_for_review' => 'review',
+            'watch' => 'review',
+            'review' => 'review',
+            'leave_as_is' => 'review',
+            'exclude_from_advice' => 'exclude',
+            'retired' => 'exclude',
+            'excluded' => 'exclude',
+            'exclude' => 'exclude'
+        );
+
+        return isset($map[$action]) ? $map[$action] : '';
+    }
+}
+
+if (!function_exists('mylottoexpertIsAdminOnlyAdviceAction')) {
+    function mylottoexpertIsAdminOnlyAdviceAction($action) {
+        $action = mylottoexpertNormalizeAdviceStatusAction($action);
+        return in_array($action, array(
+            'delete_permanently',
+            'quarantine',
+            'quarantine_duplicate',
+            'repair',
+            'batch_cleanup',
+            'global_apply',
+            'force_reconcile'
+        ), true);
+    }
+}
+
+if (!function_exists('mylottoexpertCanUserReviewOwnSavedRun')) {
+    function mylottoexpertCanUserReviewOwnSavedRun($db, $userId, $savedId) {
+        $userId = (int)$userId;
+        $savedId = (int)$savedId;
+        if ($userId <= 0 || $savedId <= 0) {
+            return false;
+        }
+        try {
+            $q = $db->getQuery(true)
+                ->select('1')
+                ->from($db->quoteName('#__myle_saved_predictions'))
+                ->where($db->quoteName('id') . ' = ' . (int)$savedId)
+                ->where($db->quoteName('user_id') . ' = ' . (int)$userId)
+                ->where($db->quoteName('is_deleted') . ' = 0')
+                ->setLimit(1);
+            $db->setQuery($q);
+            return (int)$db->loadResult() === 1;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('mylottoexpertCanPerformAdviceStatusAction')) {
+    function mylottoexpertCanPerformAdviceStatusAction($db, $user, $savedId, $action) {
+        $savedId = (int)$savedId;
+        $normalizedAction = mylottoexpertNormalizeAdviceStatusAction($action);
+        if ($savedId <= 0 || $normalizedAction === '') {
+            return false;
+        }
+
+        $userId = 0;
+        $isAdmin = false;
+        if (is_object($user)) {
+            try {
+                $userId = (int)$user->get('id');
+            } catch (\Throwable $e) {
+                $userId = 0;
+            }
+            try {
+                $isAdmin = method_exists($user, 'authorise') && $user->authorise('core.admin');
+            } catch (\Throwable $e) {
+                $isAdmin = false;
+            }
+        }
+
+        if ($userId <= 0) {
+            return false;
+        }
+        if (mylottoexpertIsAdminOnlyAdviceAction($normalizedAction)) {
+            return $isAdmin;
+        }
+        if ($isAdmin) {
+            return true;
+        }
+        return mylottoexpertCanUserReviewOwnSavedRun($db, $userId, $savedId);
+    }
+}
+
 // ------------------------------------------------------------------
 // update_advice_status  (JSON response)
 // ------------------------------------------------------------------
 if ($__mleAction === 'update_advice_status') {
-    // [[MLE_V125_SUPERUSER_ONLY_LEARNING_STATUS_ACTIONS]]
-    $__mleV125CanManageLearningStatus = false;
-    try {
-        $__mleV125ActionUser = \Joomla\CMS\Factory::getUser();
-        $__mleV125CanManageLearningStatus = is_object($__mleV125ActionUser) && method_exists($__mleV125ActionUser, 'authorise') && $__mleV125ActionUser->authorise('core.admin');
-    } catch (\Throwable $__mleV125GateEx) {
-        $__mleV125CanManageLearningStatus = false;
-    }
-    if (!$__mleV125CanManageLearningStatus) {
-        try { $app->setHeader('Content-Type', 'application/json; charset=utf-8', true); $app->sendHeaders(); } catch (\Throwable $__h) { @header('Content-Type: application/json; charset=utf-8'); }
-        echo json_encode(array('ok' => false, 'error' => 'learning_status_managed_automatically'));
-        exit;
-    }
     $app->setHeader('Content-Type', 'application/json; charset=utf-8', true);
-
     if (!\Joomla\CMS\Session\Session::checkToken('post')) {
         echo json_encode(array('ok' => false, 'error' => 'Invalid token.'));
         exit;
     }
-
     if (MLE_DEMO_MODE) {
         echo json_encode(array('ok' => false, 'error' => 'Demo mode.'));
         exit;
     }
-
-    if ($workspaceUserId <= 0) {
+    $actionUser = \Joomla\CMS\Factory::getUser();
+    $actionUserId = (int)(is_object($actionUser) ? $actionUser->get('id') : 0);
+    if ($actionUserId <= 0) {
         echo json_encode(array('ok' => false, 'error' => 'Not logged in.'));
         exit;
     }
 
-    $__advRunId = $app->input->getInt('run_id', 0);
-    $__advStatus = strtolower(trim($app->input->getString('status', '')));
-
-    if ($__advRunId <= 0) {
-        echo json_encode(array('ok' => false, 'error' => 'Missing run_id.'));
+    $savedId = (int)$app->input->post->getInt('run_id', 0);
+    $normalizedAction = mylottoexpertNormalizeAdviceStatusAction($app->input->post->getString('status', ''));
+    if ($savedId <= 0 || $normalizedAction === '' || mylottoexpertIsAdminOnlyAdviceAction($normalizedAction)) {
+        echo json_encode(array('ok' => false, 'error' => 'Invalid status action.'));
         exit;
     }
-
-    if (!in_array($__advStatus, array('use_in_advice', 'watch', 'retired', 'excluded', ''), true)) {
-        echo json_encode(array('ok' => false, 'error' => 'Invalid status.'));
+    if (!mylottoexpertCanPerformAdviceStatusAction($db, $actionUser, $savedId, $normalizedAction)) {
+        echo json_encode(array('ok' => false, 'error' => 'Not authorized.'));
         exit;
     }
-
-    // Keep stored status values consistent with apply_evidence_choices.
-    if ($__advStatus === 'excluded') {
-        $__advStatus = 'retired';
-    }
-
-    mleAdvisoryEnsureSchemaColumns($db);
 
     try {
-        $prefix = $db->getPrefix();
-
-        $perfColsRaw = $db->getTableColumns('#__skai_learning_performance', false);
-        $perfCols = is_array($perfColsRaw) ? array_keys($perfColsRaw) : array();
-
-        if (!in_array('advice_status', $perfCols, true)) {
-            $db->setQuery('ALTER TABLE `' . $prefix . 'skai_learning_performance` ADD COLUMN `advice_status` VARCHAR(20) NOT NULL DEFAULT \'use_in_advice\'');
-            $db->execute();
+        mleAdvisoryEnsureSchemaColumns($db);
+        $targetUserId = $actionUserId;
+        if (method_exists($actionUser, 'authorise') && $actionUser->authorise('core.admin')) {
+            $qOwner = $db->getQuery(true)
+                ->select($db->quoteName('user_id'))
+                ->from($db->quoteName('#__myle_saved_predictions'))
+                ->where($db->quoteName('id') . ' = ' . (int)$savedId)
+                ->setLimit(1);
+            $db->setQuery($qOwner);
+            $targetUserId = (int)$db->loadResult();
         }
 
-        if (!in_array('advice_status_updated_at', $perfCols, true)) {
-            $db->setQuery('ALTER TABLE `' . $prefix . 'skai_learning_performance` ADD COLUMN `advice_status_updated_at` DATETIME NULL DEFAULT NULL AFTER `advice_status`');
-            $db->execute();
+        $statusSql = $db->quote($normalizedAction);
+        $qSave = $db->getQuery(true)
+            ->update($db->quoteName('#__myle_saved_predictions'))
+            ->set($db->quoteName('advice_status') . ' = ' . $statusSql)
+            ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
+            ->set($db->quoteName('status_explicit') . ' = 1')
+            ->where($db->quoteName('id') . ' = ' . (int)$savedId)
+            ->where($db->quoteName('is_deleted') . ' = 0');
+        if ($targetUserId > 0) {
+            $qSave->where($db->quoteName('user_id') . ' = ' . (int)$targetUserId);
         }
-
-        $snColsRaw = $db->getTableColumns('#__user_saved_numbers', false);
-        $snCols = is_array($snColsRaw) ? array_keys($snColsRaw) : array();
-
-        if (!in_array('advice_status', $snCols, true)) {
-            $db->setQuery('ALTER TABLE `' . $prefix . 'user_saved_numbers` ADD COLUMN `advice_status` VARCHAR(20) NOT NULL DEFAULT \'use_in_advice\'');
-            $db->execute();
-        }
-
-        if (!in_array('advice_status_updated_at', $snCols, true)) {
-            $db->setQuery('ALTER TABLE `' . $prefix . 'user_saved_numbers` ADD COLUMN `advice_status_updated_at` DATETIME NULL DEFAULT NULL AFTER `advice_status`');
-            $db->execute();
-        }
-
-        $q = $db->getQuery(true)
-            ->select(array($db->quoteName('id'), $db->quoteName('run_id')))
-            ->from($db->quoteName('#__skai_learning_performance'))
-            ->where($db->quoteName('id') . ' = ' . (int)$__advRunId)
-            ->where($db->quoteName('user_id') . ' = ' . (int)$workspaceUserId);
-
-        $db->setQuery($q, 0, 1);
-        $perf = $db->loadAssoc();
-
-        if (empty($perf)) {
+        $db->setQuery($qSave);
+        $db->execute();
+        if ((int)$db->getAffectedRows() < 1) {
             echo json_encode(array('ok' => false, 'error' => 'Run not found.'));
             exit;
         }
 
-        $statusSql = ($__advStatus === '') ? 'NULL' : $db->quote($__advStatus);
-        // [[MLE_RUN_SELECTION_EXPLICIT_FLAG]] status_explicit=1 marks this as a deliberate user choice.
-        $explicitVal = ($__advStatus !== '') ? 1 : 0;
-
-        $q = $db->getQuery(true)
-            ->update($db->quoteName('#__skai_learning_performance'))
-            ->set($db->quoteName('advice_status') . ' = ' . $statusSql)
-            ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
-            ->set($db->quoteName('status_explicit') . ' = ' . (int)$explicitVal)
-            ->where($db->quoteName('id') . ' = ' . (int)$__advRunId)
-            ->where($db->quoteName('user_id') . ' = ' . (int)$workspaceUserId);
-
-        $db->setQuery($q);
-        $db->execute();
-
-        $savedId = (int)($perf['run_id'] ?? 0);
-        if ($savedId > 0) {
-            try {
-                $q2 = $db->getQuery(true)
-                    ->update($db->quoteName('#__user_saved_numbers'))
-                    ->set($db->quoteName('advice_status') . ' = ' . $statusSql)
-                    ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
-                    ->set($db->quoteName('status_explicit') . ' = ' . (int)$explicitVal)
-                    ->where($db->quoteName('id') . ' = ' . $savedId)
-                    ->where($db->quoteName('user_id') . ' = ' . (int)$workspaceUserId);
-
-                $db->setQuery($q2);
-                $db->execute();
-            } catch (\Throwable $e2) {
-                // Non-fatal: performance status is still saved.
+        try {
+            $qLp = $db->getQuery(true)
+                ->update($db->quoteName('#__myle_learning_performance'))
+                ->set($db->quoteName('advice_status') . ' = ' . $statusSql)
+                ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
+                ->set($db->quoteName('status_explicit') . ' = 1')
+                ->where($db->quoteName('saved_prediction_id') . ' = ' . (int)$savedId);
+            if ($targetUserId > 0) {
+                $qLp->where($db->quoteName('user_id') . ' = ' . (int)$targetUserId);
             }
+            $db->setQuery($qLp);
+            $db->execute();
+        } catch (\Throwable $ignoreMirror) {
         }
 
-        echo json_encode(array('ok' => true, 'status' => $__advStatus));
+        echo json_encode(array(
+            'ok' => true,
+            'status' => $normalizedAction,
+            'stored' => $normalizedAction
+        ));
     } catch (\Throwable $e) {
         error_log('[MLE Advisory] update_advice_status error: ' . $e->getMessage());
         echo json_encode(array('ok' => false, 'error' => 'Database error.'));
     }
-
     exit;
 }
 
@@ -26592,6 +26660,168 @@ if ($__mleAction === 'update_advice_status') {
 // bulk_run_selection_action (bulk status move / bulk permanent delete)
 // ------------------------------------------------------------------
 if ($__mleAction === 'bulk_run_selection_action') {
+    $hasDecision = trim((string)$app->input->post->getString('decision', '')) !== '';
+    $postedRunIds = (array)$app->input->post->get('run_ids', array(), 'array');
+    $postedRunIdsCsv = trim((string)$app->input->post->getString('run_ids_csv', ''));
+    if ($hasDecision || !empty($postedRunIds) || $postedRunIdsCsv !== '') {
+        if ($app->input->getMethod() !== 'POST' || !\Joomla\CMS\Session\Session::checkToken('post')) {
+            $app->enqueueMessage('Session expired. Please refresh and try again.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+        if (MLE_DEMO_MODE) {
+            $app->enqueueMessage('Demo mode: Cannot apply bulk run selection actions.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+        $actionUser = \Joomla\CMS\Factory::getUser();
+        $actionUserId = (int)(is_object($actionUser) ? $actionUser->get('id') : 0);
+        $isActionAdmin = is_object($actionUser) && method_exists($actionUser, 'authorise') && $actionUser->authorise('core.admin');
+        if ($actionUserId <= 0) {
+            $app->enqueueMessage('Please log in to apply bulk run selection actions.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+
+        $normalizedAction = mylottoexpertNormalizeAdviceStatusAction($app->input->post->getString('decision', ''));
+        if ($normalizedAction === '') {
+            $app->enqueueMessage('Invalid bulk action.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+        if (mylottoexpertIsAdminOnlyAdviceAction($normalizedAction) && !$isActionAdmin) {
+            $app->enqueueMessage('Not authorized.', 'error');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+
+        $runIds = array();
+        foreach ($postedRunIds as $rid) {
+            $rid = (int)$rid;
+            if ($rid > 0) {
+                $runIds[$rid] = $rid;
+            }
+        }
+        if ($postedRunIdsCsv !== '') {
+            foreach (explode(',', $postedRunIdsCsv) as $part) {
+                $rid = (int)trim($part);
+                if ($rid > 0) {
+                    $runIds[$rid] = $rid;
+                }
+            }
+        }
+        $selectedSavedIds = (array)$app->input->post->get('selected_saved_ids', array(), 'array');
+        foreach ($selectedSavedIds as $rid) {
+            $rid = (int)$rid;
+            if ($rid > 0) {
+                $runIds[$rid] = $rid;
+            }
+        }
+        $runIds = array_values($runIds);
+        if (empty($runIds)) {
+            $app->enqueueMessage('No rows selected.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+
+        $allowedIds = array();
+        foreach ($runIds as $savedId) {
+            if (mylottoexpertCanPerformAdviceStatusAction($db, $actionUser, $savedId, $normalizedAction)) {
+                $allowedIds[$savedId] = $savedId;
+            }
+        }
+        $allowedIds = array_values($allowedIds);
+        if (empty($allowedIds)) {
+            $app->enqueueMessage('No selected runs were eligible for this action.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+
+        try {
+            mleAdvisoryEnsureSchemaColumns($db);
+            $in = implode(',', array_map('intval', $allowedIds));
+            if ($normalizedAction === 'delete_permanently') {
+                $qDel = $db->getQuery(true)
+                    ->update($db->quoteName('#__myle_saved_predictions'))
+                    ->set($db->quoteName('is_deleted') . ' = 1')
+                    ->set($db->quoteName('advice_status') . ' = ' . $db->quote('exclude'))
+                    ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
+                    ->set($db->quoteName('status_explicit') . ' = 1')
+                    ->set($db->quoteName('updated_at') . ' = NOW()')
+                    ->where($db->quoteName('is_deleted') . ' = 0')
+                    ->where($db->quoteName('id') . ' IN (' . $in . ')');
+                if (!$isActionAdmin) {
+                    $qDel->where($db->quoteName('user_id') . ' = ' . (int)$actionUserId);
+                }
+                $db->setQuery($qDel);
+                $db->execute();
+                $changed = max(0, (int)$db->getAffectedRows());
+
+                try {
+                    $qLp = $db->getQuery(true)
+                        ->update($db->quoteName('#__myle_learning_performance'))
+                        ->set($db->quoteName('advice_status') . ' = ' . $db->quote('exclude'))
+                        ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
+                        ->set($db->quoteName('status_explicit') . ' = 1')
+                        ->where($db->quoteName('saved_prediction_id') . ' IN (' . $in . ')');
+                    if (!$isActionAdmin) {
+                        $qLp->where($db->quoteName('user_id') . ' = ' . (int)$actionUserId);
+                    }
+                    $db->setQuery($qLp);
+                    $db->execute();
+                } catch (\Throwable $ignoreLp) {
+                }
+
+                $app->enqueueMessage('Rows permanently deleted: ' . (int)$changed, 'message');
+            } else {
+                $qSave = $db->getQuery(true)
+                    ->update($db->quoteName('#__myle_saved_predictions'))
+                    ->set($db->quoteName('advice_status') . ' = ' . $db->quote($normalizedAction))
+                    ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
+                    ->set($db->quoteName('status_explicit') . ' = 1')
+                    ->set($db->quoteName('updated_at') . ' = NOW()')
+                    ->where($db->quoteName('is_deleted') . ' = 0')
+                    ->where($db->quoteName('id') . ' IN (' . $in . ')');
+                if (!$isActionAdmin) {
+                    $qSave->where($db->quoteName('user_id') . ' = ' . (int)$actionUserId);
+                }
+                $db->setQuery($qSave);
+                $db->execute();
+                $changed = max(0, (int)$db->getAffectedRows());
+
+                try {
+                    $qLp = $db->getQuery(true)
+                        ->update($db->quoteName('#__myle_learning_performance'))
+                        ->set($db->quoteName('advice_status') . ' = ' . $db->quote($normalizedAction))
+                        ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
+                        ->set($db->quoteName('status_explicit') . ' = 1')
+                        ->where($db->quoteName('saved_prediction_id') . ' IN (' . $in . ')');
+                    if (!$isActionAdmin) {
+                        $qLp->where($db->quoteName('user_id') . ' = ' . (int)$actionUserId);
+                    }
+                    $db->setQuery($qLp);
+                    $db->execute();
+                } catch (\Throwable $ignoreLp) {
+                }
+
+                $labels = array(
+                    'consider' => 'Use for future advice',
+                    'review' => 'Keep for review',
+                    'exclude' => 'Exclude from advice'
+                );
+                $label = isset($labels[$normalizedAction]) ? $labels[$normalizedAction] : 'Updated';
+                $app->enqueueMessage($label . ': ' . (int)$changed, 'message');
+            }
+        } catch (\Throwable $e) {
+            $app->enqueueMessage('Bulk update failed.', 'error');
+        }
+
+        $__cleanRedirectUri = \Joomla\CMS\Uri\Uri::getInstance();
+        $__cleanRedirectUri->delVar('mle_action');
+        $app->redirect($__cleanRedirectUri->toString());
+        return;
+    }
+
     // [[MLE_V125_SUPERUSER_ONLY_LEARNING_STATUS_ACTIONS]]
     // Regular users should not manage Hive/advice eligibility. The system decides learning eligibility automatically.
     $__mleV125CanManageLearningStatus = false;
@@ -26857,6 +27087,131 @@ if ($__mleAction === 'bulk_run_selection_action') {
 // apply_evidence_choices (user-facing: Apply Run Selection)
 // ------------------------------------------------------------------
 if ($__mleAction === 'apply_evidence_choices' || $__mleAction === 'apply_batch_cleanup') {
+    $modernChoice = trim((string)$app->input->post->getString('evidence_choice', ''));
+    $modernRunIds = (array)$app->input->post->get('run_ids', array(), 'array');
+    $modernRunIdsCsv = trim((string)$app->input->post->getString('run_ids_csv', ''));
+    if ($modernChoice !== '' || !empty($modernRunIds) || $modernRunIdsCsv !== '') {
+        if ($app->input->getMethod() !== 'POST' || !\Joomla\CMS\Session\Session::checkToken('post')) {
+            $app->enqueueMessage('Session expired. Please refresh and try again.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+        if (MLE_DEMO_MODE) {
+            $app->enqueueMessage('Demo mode: Cannot apply run selection.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+
+        $actionUser = \Joomla\CMS\Factory::getUser();
+        $actionUserId = (int)(is_object($actionUser) ? $actionUser->get('id') : 0);
+        if ($actionUserId <= 0) {
+            $app->enqueueMessage('Please log in to apply run selection.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+
+        $normalizedAction = mylottoexpertNormalizeAdviceStatusAction($modernChoice);
+        if ($normalizedAction === '' || mylottoexpertIsAdminOnlyAdviceAction($normalizedAction)) {
+            $app->enqueueMessage('Invalid run selection action.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+
+        $runIds = array();
+        foreach ($modernRunIds as $rid) {
+            $rid = (int)$rid;
+            if ($rid > 0) {
+                $runIds[$rid] = $rid;
+            }
+        }
+        if ($modernRunIdsCsv !== '') {
+            foreach (explode(',', $modernRunIdsCsv) as $part) {
+                $rid = (int)trim($part);
+                if ($rid > 0) {
+                    $runIds[$rid] = $rid;
+                }
+            }
+        }
+        $runIds = array_values($runIds);
+        if (empty($runIds)) {
+            $app->enqueueMessage('No selected runs were eligible for status updates.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+
+        $allowedIds = array();
+        foreach ($runIds as $savedId) {
+            if (mylottoexpertCanPerformAdviceStatusAction($db, $actionUser, $savedId, $normalizedAction)) {
+                $allowedIds[$savedId] = $savedId;
+            }
+        }
+        $allowedIds = array_values($allowedIds);
+        if (empty($allowedIds)) {
+            $app->enqueueMessage('No selected runs were eligible for status updates.', 'warning');
+            $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
+            return;
+        }
+
+        try {
+            mleAdvisoryEnsureSchemaColumns($db);
+            $in = implode(',', array_map('intval', $allowedIds));
+
+            $qUpdateSaved = $db->getQuery(true)
+                ->update($db->quoteName('#__myle_saved_predictions'))
+                ->set($db->quoteName('advice_status') . ' = ' . $db->quote($normalizedAction))
+                ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
+                ->set($db->quoteName('status_explicit') . ' = 1')
+                ->set($db->quoteName('updated_at') . ' = NOW()')
+                ->where($db->quoteName('id') . ' IN (' . $in . ')')
+                ->where($db->quoteName('user_id') . ' = ' . (int)$actionUserId)
+                ->where($db->quoteName('is_deleted') . ' = 0');
+            $db->setQuery($qUpdateSaved);
+            $db->execute();
+            $updatedSaved = max(0, (int)$db->getAffectedRows());
+
+            $updatedPerf = 0;
+            try {
+                $qUpdatePerf = $db->getQuery(true)
+                    ->update($db->quoteName('#__myle_learning_performance'))
+                    ->set($db->quoteName('advice_status') . ' = ' . $db->quote($normalizedAction))
+                    ->set($db->quoteName('advice_status_updated_at') . ' = NOW()')
+                    ->set($db->quoteName('status_explicit') . ' = 1')
+                    ->where($db->quoteName('saved_prediction_id') . ' IN (' . $in . ')')
+                    ->where($db->quoteName('user_id') . ' = ' . (int)$actionUserId);
+                $db->setQuery($qUpdatePerf);
+                $db->execute();
+                $updatedPerf = max(0, (int)$db->getAffectedRows());
+            } catch (\Throwable $ignorePerf) {
+                $updatedPerf = 0;
+            }
+
+            if ($updatedSaved > 0 || $updatedPerf > 0) {
+                $labels = array(
+                    'consider' => 'Use for future advice',
+                    'review' => 'Keep for review',
+                    'exclude' => 'Exclude from advice'
+                );
+                $label = isset($labels[$normalizedAction]) ? $labels[$normalizedAction] : 'Updated';
+                $app->enqueueMessage(
+                    'Run selection applied. Action: ' . $label
+                    . '. Updated saved runs: ' . (int)$updatedSaved
+                    . ($updatedPerf > 0 ? '; updated scored evidence rows: ' . (int)$updatedPerf : '')
+                    . '.',
+                    'message'
+                );
+            } else {
+                $app->enqueueMessage('No selected runs were changed by the bulk action.', 'warning');
+            }
+        } catch (\Throwable $e) {
+            $app->enqueueMessage('Run selection update failed.', 'error');
+        }
+
+        $__cleanRedirectUri = \Joomla\CMS\Uri\Uri::getInstance();
+        $__cleanRedirectUri->delVar('mle_action');
+        $app->redirect($__cleanRedirectUri->toString());
+        return;
+    }
+
     // [[MLE_V125_SUPERUSER_ONLY_LEARNING_STATUS_ACTIONS]]
     // Regular users no longer classify runs for advice; Hive/MyLottoExpert handles this automatically.
     $__mleV125CanManageLearningStatus = false;
@@ -38988,7 +39343,7 @@ foreach ((array)$__runSummary as $__mleDrawResultsLazyData) {
 }
 unset($__mleDrawResultsLazyData);
 ?>
-<div id="mle-historical-validation-wrap" class="prc-wrap mle-draw-results-lazy-shell" aria-label="Prediction results comparison" role="region" data-mle-draw-results-lazy="1">
+<div id="mle-historical-validation-detail-wrap" class="prc-wrap mle-draw-results-lazy-shell" aria-label="Prediction results comparison" role="region" data-mle-draw-results-lazy="1">
   <div class="mle-draw-results-lazy-card">
     <span class="mle-draw-results-lazy-card__eyebrow">Draw Results Comparison</span>
     <h2 class="mle-draw-results-lazy-card__title">Load scored draw evidence only when you need it</h2>
@@ -39046,16 +39401,16 @@ unset($__mleDrawResultsLazyData);
     var parser = new DOMParser();
     var doc = parser.parseFromString(String(html || ''), 'text/html');
     var loaded = doc.getElementById('mle-historical-validation-wrap');
-    var current = byId('mle-historical-validation-wrap');
+    var current = byId('mle-historical-validation-detail-wrap');
     if (!loaded || !current) { return false; }
     if (loaded.getAttribute('data-mle-draw-results-lazy') === '1') { return false; }
     current.parentNode.replaceChild(document.importNode(loaded, true), current);
-    wireToggleAll(byId('mle-historical-validation-wrap'));
-    try { byId('mle-historical-validation-wrap').scrollIntoView({behavior:'smooth', block:'start'}); } catch(e) { try { byId('mle-historical-validation-wrap').scrollIntoView(true); } catch(ignore) {} }
+    wireToggleAll(byId('mle-historical-validation-detail-wrap'));
+    try { byId('mle-historical-validation-detail-wrap').scrollIntoView({behavior:'smooth', block:'start'}); } catch(e) { try { byId('mle-historical-validation-detail-wrap').scrollIntoView(true); } catch(ignore) {} }
     return true;
   }
   function loadDrawResults(btn){
-    var wrap = byId('mle-historical-validation-wrap');
+    var wrap = byId('mle-historical-validation-detail-wrap');
     var href = btn ? (btn.getAttribute('data-mle-load-href') || btn.getAttribute('href') || '') : '';
     if (!wrap || !href) { return true; }
     if (!window.fetch || !window.DOMParser) { window.location.href = href; return false; }

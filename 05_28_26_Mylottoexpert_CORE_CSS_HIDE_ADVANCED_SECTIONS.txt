@@ -2259,7 +2259,7 @@ h3.title { font-size: 1.5rem; }
 .mle-ci-beginner-summary__steps li{margin-bottom:0.45rem;}
 html[data-mle-mode="beginner"] .mle-beginner-only{display:block !important;}
 html[data-mle-mode="standard"] .mle-beginner-only,html[data-mle-mode="advanced"] .mle-beginner-only{display:none !important;}
-html[data-mle-mode="beginner"] #mle-historical-validation-wrap,html[data-mle-mode="beginner"] .skai-lp-panel,html[data-mle-mode="beginner"] #mle-advanced-analysis,html[data-mle-mode="beginner"] .mle-quick-nav,html[data-mle-mode="beginner"] .mle-onboard-kpi-row,html[data-mle-mode="beginner"] .mle-onboard-main-grid,html[data-mle-mode="beginner"] .mle-ci-decision-band,html[data-mle-mode="beginner"] .mle-ci-layer-grid,html[data-mle-mode="beginner"] .mle-ci-footer-grid,html[data-mle-mode="beginner"] .mle-ci-decision-hero__legend{display:none !important;}
+html[data-mle-mode="beginner"] #mle-historical-validation-wrap,html[data-mle-mode="beginner"] #mle-historical-validation-detail-wrap,html[data-mle-mode="beginner"] .skai-lp-panel,html[data-mle-mode="beginner"] #mle-advanced-analysis,html[data-mle-mode="beginner"] .mle-quick-nav,html[data-mle-mode="beginner"] .mle-onboard-kpi-row,html[data-mle-mode="beginner"] .mle-onboard-main-grid,html[data-mle-mode="beginner"] .mle-ci-decision-band,html[data-mle-mode="beginner"] .mle-ci-layer-grid,html[data-mle-mode="beginner"] .mle-ci-footer-grid,html[data-mle-mode="beginner"] .mle-ci-decision-hero__legend{display:none !important;}
 html[data-mle-mode="beginner"] .mle-ci-beginner-summary{display:block !important;}
 html[data-mle-mode="standard"] #mle-advanced-analysis,html[data-mle-mode="standard"] .skai-lp-panel{display:none !important;}
 html[data-mle-mode="standard"] .mle-standard-only,html[data-mle-mode="standard"] .mle-nonbeginner-only{display:block !important;}
@@ -6621,7 +6621,7 @@ html[data-mle-mode="standard"] .mle-quick-nav__advanced{display:none !important;
 .mle-wheel-fav-section,
 #favorite-lotteries,
 #numbers-to-play,
-#mle-historical-validation-wrap{
+#mle-historical-validation-wrap,#mle-historical-validation-detail-wrap{
   box-sizing:border-box;
   width:100%;
   max-width:1180px;

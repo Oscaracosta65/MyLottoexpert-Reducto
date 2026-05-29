@@ -4115,7 +4115,7 @@ function mleHistoricalHeaderKeydown(event, sectionId) {
 }
 
 function mlePrintHistoricalAll() {
-  var wrap = document.getElementById('mle-historical-validation-wrap');
+  var wrap = document.getElementById('mle-historical-validation-detail-wrap') || document.getElementById('mle-historical-validation-wrap');
   if (!wrap) {
     return;
   }
