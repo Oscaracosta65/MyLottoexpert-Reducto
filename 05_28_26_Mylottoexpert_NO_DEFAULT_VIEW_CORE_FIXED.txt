@@ -40859,7 +40859,7 @@ unset($__lotRef);
           Print All
         </button><?php endif; ?>
 
-        <?php if ($__mleWorkspaceMode !== 'beginner'): ?><form method="post" class="sdi-delete-form" style="display:inline-flex; margin:0; vertical-align:middle;"
+        <form method="post" class="sdi-delete-form" style="display:inline-flex; margin:0; vertical-align:middle;"
                aria-label="Delete from MyLottoExpert"
                data-confirm-submit="Delete from MyLottoExpert?">
           <?php echo \Joomla\CMS\HTML\HTMLHelper::_('form.token'); ?>
@@ -40875,7 +40875,7 @@ unset($__lotRef);
                    title="Delete from MyLottoExpert">
             <span class="sdi-delete-btn__icon" aria-hidden="true">X</span> Delete from MyLottoExpert
           </button>
-        </form><?php endif; ?>
+        </form>
       </div>
     </div>
   </div>
