@@ -36552,6 +36552,22 @@ if (!is_array($__mlePerformanceProfile)) {
     $__mlePerformanceProfile = mylottoexpertBuildPerformanceProfile($app);
 }
 
+// [[MLE_HIDDEN_LOTTERY_PREFILTER_V1_2026_05_29]]
+// Fetch the hidden lottery IDs before any DB query so rows for hidden lotteries
+// are excluded at the database level rather than filtered out in PHP after load.
+// This prevents wasted memory and CPU when the user has removed lotteries from
+// the workspace but the page has not yet been reloaded after their removal.
+$__mleHiddenIds = array();
+if (function_exists('mylottoexpertGetHiddenLotteryIds')) {
+    $__mleHiddenRaw = mylottoexpertGetHiddenLotteryIds($db, $workspaceUserId);
+    foreach ((array)$__mleHiddenRaw as $__mleHidRaw) {
+        $__mleHidInt = (int)$__mleHidRaw;
+        if ($__mleHidInt > 0) { $__mleHiddenIds[] = $__mleHidInt; }
+    }
+    unset($__mleHiddenRaw, $__mleHidRaw, $__mleHidInt);
+}
+// /[[MLE_HIDDEN_LOTTERY_PREFILTER_V1_2026_05_29]]
+
 $__mleSavedRowsLimited = false;
 // 1) Fetch saved predictions with timestamps
 $q = $db->getQuery(true);
@@ -36629,6 +36645,19 @@ if (in_array('save_intent', $__snCols, true)) {
 } else {
     $q->where("sn.source <> 'strategy_set'");
 }
+// [[MLE_HIDDEN_LOTTERY_PREFILTER_V1_2026_05_29]]
+// Exclude saved predictions that belong to lotteries the user has manually
+// removed from the workspace. This prevents loading data the user will never
+// see, reducing both SQL result size and PHP memory usage.
+if (!empty($__mleHiddenIds)) {
+    $__hiddenIn = implode(',', $__mleHiddenIds);
+    $q->where('COALESCE(sn.' . $db->quoteName('lottery_id') . ', 0) NOT IN (' . $__hiddenIn . ')');
+    if (in_array('target_lottery_id', $__snCols, true)) {
+        $q->where('(COALESCE(sn.' . $db->quoteName('target_lottery_id') . ', 0) = 0 OR COALESCE(sn.' . $db->quoteName('target_lottery_id') . ', 0) NOT IN (' . $__hiddenIn . '))');
+    }
+    unset($__hiddenIn);
+}
+// /[[MLE_HIDDEN_LOTTERY_PREFILTER_V1_2026_05_29]]
 $q->order('sn.next_draw_date ' . $predSortDir . ', sn.source ASC, COALESCE(sn.generated_at,sn.date_saved) ' . $predSortDir);
 // [[MLE_PERFORMANCE_MODE_PHASE2_SAVED_ROWS_LIMIT_2026_05_27]]
 // First-load safety cap. Full diagnostic workspace is available to Super Users
@@ -36754,6 +36783,14 @@ try {
     }
 
     $qPlay->order('COALESCE(sn.date_saved, sn.generated_at) DESC');
+    // [[MLE_HIDDEN_LOTTERY_PREFILTER_V1_2026_05_29]]
+    // Exclude play sets for lotteries the user has removed from the workspace.
+    if (!empty($__mleHiddenIds)) {
+        $__hiddenPlayIn = implode(',', $__mleHiddenIds);
+        $qPlay->where('COALESCE(sn.' . $db->quoteName('lottery_id') . ', 0) NOT IN (' . $__hiddenPlayIn . ')');
+        unset($__hiddenPlayIn);
+    }
+    // /[[MLE_HIDDEN_LOTTERY_PREFILTER_V1_2026_05_29]]
     // [[MLE_PERFORMANCE_MODE_PHASE2_PLAY_ROWS_LIMIT_2026_05_27]]
     // Keep Numbers to Play from becoming a first-load bottleneck on active accounts.
     $qPlay = mylottoexpertApplyQueryLimit($qPlay, (int)($__mlePerformanceProfile['play_set_limit'] ?? 300));
